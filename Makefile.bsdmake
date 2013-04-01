@@ -5,7 +5,7 @@ RUBY?=	/usr/local/bin/ruby
 all:	check_nsca
 
 check_nsca:
-	sed -e "s|__RUBY__|${RUBY}|" check_nsca.rb > ${.TARGET} || rm ${.TARGET}
+	sed -e "s|__RUBY__|${RUBY}|" check_nsca.rb > ${.TARGET} || (rm -f ${.TARGET} && exit 1)
 
 install:
 	install check_nsca ${NAGIOS_PLUGINS_DIR}/
