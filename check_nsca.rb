@@ -1,15 +1,72 @@
+#!__RUBY__
+require 'rubygems'
 require 'nagiosplugin'
+require 'nagiosplugin/default_options'
 require 'uuidtools'
 require 'open3'
 
 # TODO
-# - options
-# - set ENV["PATH"]
-
+# - -V reports wrong version
 class NSCA < NagiosPlugin::Plugin
-  @@icinga_log = "/var/spool/icinga/icinga.log"
-  def self.icinga_log
-    @@icinga_log
+
+  include NagiosPlugin::DefaultOptions
+  VERSION = 0.1
+
+  class << self
+    def run(*args)
+      self.new(*args).run
+    end
+  end
+
+  def parse_options(*args)
+    @options = {}
+    OptionParser.new do |opts|
+      opts.on('--logfile file', String, 'File name of Nagios log file') do |s|
+        @options[:logfile] = s
+      end
+      opts.on("-H", "--host hosname", String, "host to send_nsca (almost always default is fine") do |host|
+        @options[:host] = host
+      end
+      opts.on("--nsca-cfg /path/to/send_nsca.cfg", String, "path to send_nsca.cfg") do |path|
+        @options[:nscacfg] = path
+      end
+
+      yield(opts) if block_given?
+
+      begin
+        opts.parse!(args)
+        @options
+      rescue => e
+        puts "#{e}\n\n#{opts}"
+        exit(3)
+      end
+    end
+  end
+
+  def initialize(*args)
+     parse_options(*args, &default_options)
+     @logfile = @options[:logfile]
+     # /var/spool/icinga/icinga.log
+     if @logfile.nil? || @logfile.empty?
+       case RbConfig::CONFIG['target_os']
+       when /freebsd/
+         @logfile = "/var/spool/icinga/icinga.log"
+       else
+         @logfile = "/var/spool/nagios/nagios.log"
+       end
+     end
+     @nsca = @options[:nsca] || "send_nsca"
+     @host = @options[:host] || "localhost"
+     @nsca_cfg = @options[:nscacfg]
+     if @nsca_cfg.nil? || @nsca_cfg.empty?
+       case RbConfig::CONFIG['target_os']
+       when /freebsd/
+         @nsca_cfg = "/usr/local/etc/nagios/send_nsca.cfg"
+       else
+         @nsca_cfg = "/etc/nagios/send_nsca.cfg"
+       end
+     end
+     ENV['PATH'] = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
   end
 
   def check
@@ -17,7 +74,8 @@ class NSCA < NagiosPlugin::Plugin
     timeout = 10
     uuid = UUIDTools::UUID.timestamp_create
     reader_thread = Thread.new do
-      stdin, stdout, stderr, wait_thr = Open3.popen3("tail -f #{NSCA.icinga_log}")
+      command = "tail -f #{@logfile}"
+      stdin, stdout, stderr, wait_thr = Open3.popen3(command)
       stdin.close
       found = 0
       begin
@@ -31,7 +89,7 @@ class NSCA < NagiosPlugin::Plugin
           end
         end
       rescue EOFError => e
-        raise "command tail exited with \"%s\"" % [ stderr.readlines.join.chomp ]
+        raise "command \"%s\" exited with \"%s\"" % [ command, stderr.readlines.join.chomp ]
       end
       stderr.close
       stdout.close
@@ -41,16 +99,16 @@ class NSCA < NagiosPlugin::Plugin
     send_probe(uuid.to_s)
     thread = reader_thread.join(timeout)
     if thread.nil?
-      critical("could not find %s in %s" % [ uuid.to_s, NSCA.icinga_log ])
+      critical("could not find %s in %s" % [ uuid.to_s, @logfile ])
     end
-    ok("found %s in %s" % [ uuid.to_s, NSCA.icinga_log ])
+    ok("found %s in %s" % [ uuid.to_s, @logfile ])
   end
 
   def send_probe(text = "")
-    cmd = "/usr/local/sbin/send_nsca -H localhost -c /usr/local/etc/nagios/send_nsca.cfg"
+    cmd = "#{@nsca} -H #{@host} -c #{@nsca_cfg}"
     stdin, stdout, stderr, wait_thr = Open3.popen3(cmd)
     pid = wait_thr[:pid]
-    message = sprintf "%s\t%s\t%s\t%s\n" % [ "icinag.jp.reallyenglish.com", "check_nsca_local", "0", text ]
+    message = sprintf "%s\t%s\t%s\t%s\n" % [ @host, "check_nsca_local", "0", text ]
     begin
       stdin.write(message)
     rescue Errno::EPIPE => e
@@ -65,4 +123,4 @@ class NSCA < NagiosPlugin::Plugin
   end
 end
 
-NSCA.run
+NSCA.run(*ARGV)
