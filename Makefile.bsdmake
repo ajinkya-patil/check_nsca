@@ -1,4 +1,4 @@
-DESTIDIR?=	/usr/local/libexec/nagios
+DESTDIR?=	/usr/local/libexec/nagios
 RUBY?=	/usr/local/bin/ruby
 
 all:	check_nsca
